@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: app_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/app_db
+      JWT_SECRET: dev-secret-key-change-in-prod-32chars-long
+      AI_MODE: demo
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      NEXT_PUBLIC_AI_MODE: demo
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./public/uploads:/app/public/uploads
+
+volumes:
+  postgres_data:
