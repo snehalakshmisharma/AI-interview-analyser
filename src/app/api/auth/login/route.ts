@@ -36,6 +36,15 @@ export async function POST(req: NextRequest) {
     return res;
   } catch (error) {
     console.error("Login error:", error);
+    if (error instanceof Error && "cause" in error) {
+      const cause = error.cause as { code?: string } | undefined;
+      if (cause?.code === "ECONNREFUSED") {
+        return NextResponse.json(
+          { error: "Database unavailable. Start PostgreSQL and try again." },
+          { status: 503 },
+        );
+      }
+    }
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
