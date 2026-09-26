@@ -1,4 +1,4 @@
-import { pgTable, text, varchar, integer, timestamp, pgEnum, jsonb, uuid, real, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, timestamp, pgEnum, jsonb, uuid, real, boolean, uniqueIndex } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 
 export const userRoleEnum = pgEnum("user_role", ["STUDENT", "FACULTY", "ADMIN"]);
@@ -83,6 +83,8 @@ export const responses = pgTable("responses", {
   audioPath: text("audio_path"),
   videoPath: text("video_path"),
   transcriptText: text("transcript_text"),
+  transcriptLocked: boolean("transcript_locked").default(false).notNull(),
+  transcriptStatus: varchar("transcript_status", { length: 20 }).default("READY").notNull(),
   duration: integer("duration"),
   submittedAt: timestamp("submitted_at").defaultNow().notNull(),
 });

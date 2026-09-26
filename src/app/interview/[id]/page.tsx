@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { MediaTranscriptPanel } from "@/components/interview/media-transcript-panel";
 import { 
   Brain, 
   Mic, 
@@ -22,8 +23,7 @@ import {
   ArrowRight,
   RotateCcw,
   Bot,
-  Trash2,
-  Wand2
+  Trash2
 } from "lucide-react";
 
 interface QuestionData {
@@ -62,7 +62,6 @@ export default function LiveInterviewPage() {
   const [responses, setResponses] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [transcribingAudio, setTranscribingAudio] = useState(false);
   const [error, setError] = useState("");
   const [timer, setTimer] = useState(120);
 
@@ -114,8 +113,9 @@ export default function LiveInterviewPage() {
         else { window.location.href = "/login"; return; }
 
         const res = await fetch(`/api/interviews/${interviewId}`);
-        if (!res.ok) throw new Error("Interview not found");
-        const data = await res.json();
+        const data = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(data?.error || `Unable to load interview (HTTP ${res.status})`);
+        if (!data?.interview || !Array.isArray(data.questions)) throw new Error("Interview data is incomplete");
         setInterview(data.interview);
         setQuestions(data.questions);
         const initialLimit = data.questions[0]?.question.timeLimit || 120;
@@ -216,6 +216,36 @@ export default function LiveInterviewPage() {
     setError("");
     isListeningRef.current = true;
     setIsListening(true);
+
+    if (interview?.mode !== "TEXT") {
+      setRecordedAudioBlob(null);
+      try {
+        let recordingStream = streamRef.current;
+        if (interview?.mode === "AUDIO") {
+          recordingStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        }
+        if (!recordingStream) throw new Error("Turn on your camera before recording video");
+
+        audioChunksRef.current = [];
+        const recorder = new MediaRecorder(recordingStream);
+        recorder.ondataavailable = (event) => {
+          if (event.data.size > 0) audioChunksRef.current.push(event.data);
+        };
+        recorder.onstop = () => {
+          const mediaType = recorder.mimeType || (interview?.mode === "VIDEO" ? "video/webm" : "audio/webm");
+          setRecordedAudioBlob(new Blob(audioChunksRef.current, { type: mediaType }));
+          if (interview?.mode === "AUDIO") recordingStream?.getTracks().forEach(track => track.stop());
+        };
+        recorder.start();
+        mediaRecorderRef.current = recorder;
+      } catch (recordError) {
+        isListeningRef.current = false;
+        setIsListening(false);
+        setError(recordError instanceof Error ? recordError.message : "Unable to start recording");
+      }
+      return;
+    }
+
     committedTextRef.current = textAnswer;
 
     // Start Web Speech Recognition
@@ -227,24 +257,6 @@ export default function LiveInterviewPage() {
       }
     }
 
-    // Start background MediaRecorder as audio backup
-    try {
-      const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      audioChunksRef.current = [];
-      const recorder = new MediaRecorder(audioStream);
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunksRef.current.push(e.data);
-      };
-      recorder.onstop = () => {
-        const blob = new Blob(audioChunksRef.current, { type: "audio/webm" });
-        setRecordedAudioBlob(blob);
-        audioStream.getTracks().forEach(t => t.stop());
-      };
-      recorder.start();
-      mediaRecorderRef.current = recorder;
-    } catch {
-      console.warn("Microphone stream not accessible for audio backup");
-    }
   };
 
   const stopListening = () => {
@@ -273,36 +285,6 @@ export default function LiveInterviewPage() {
     }
   };
 
-  // Transcribe recorded audio with AI (Backup server-side Gemini transcription)
-  const handleAITranscriptionBackup = async () => {
-    if (!recordedAudioBlob) return;
-    setTranscribingAudio(true);
-    setError("");
-
-    try {
-      const formData = new FormData();
-      formData.append("file", recordedAudioBlob, "audio.webm");
-
-      const res = await fetch("/api/transcribe", {
-        method: "POST",
-        body: formData,
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "AI transcription failed");
-
-      if (data.transcript) {
-        const newText = textAnswer ? `${textAnswer} ${data.transcript}` : data.transcript;
-        setTextAnswer(newText);
-        committedTextRef.current = newText;
-      }
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "AI transcription failed");
-    } finally {
-      setTranscribingAudio(false);
-    }
-  };
-
   // Video Camera Handling
   const stopCamera = () => {
     if (streamRef.current) {
@@ -317,7 +299,7 @@ export default function LiveInterviewPage() {
 
   const startCamera = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       streamRef.current = stream;
       if (videoPreviewRef.current) {
         videoPreviewRef.current.srcObject = stream;
@@ -330,7 +312,7 @@ export default function LiveInterviewPage() {
 
   useEffect(() => {
     if (interview?.mode === "VIDEO") {
-      navigator.mediaDevices?.getUserMedia({ video: true, audio: false })
+      navigator.mediaDevices?.getUserMedia({ video: true, audio: true })
         .then(stream => {
           streamRef.current = stream;
           if (videoPreviewRef.current) {
@@ -353,30 +335,49 @@ export default function LiveInterviewPage() {
   // Submit response & receive instant live turn feedback
   const handleLiveSubmit = async () => {
     if (!currentQuestion) return;
+    const isMediaResponse = interview?.mode === "AUDIO" || interview?.mode === "VIDEO";
     const finalAnswer = (textAnswer + (interimText ? " " + interimText : "")).trim();
 
-    if (!finalAnswer) {
-      setError("Please speak or type your answer before submitting.");
+    if (isListening) {
+      setError("Stop the recording before submitting your response.");
       return;
     }
-
-    if (isListening) {
-      stopListening();
+    if (isMediaResponse && !recordedAudioBlob) {
+      setError("Record your answer before submitting.");
+      return;
+    }
+    if (!isMediaResponse && !finalAnswer) {
+      setError("Please type or dictate your answer before submitting.");
+      return;
     }
 
     setSubmitting(true);
     setError("");
 
     try {
-      const res = await fetch(`/api/interviews/${interviewId}/responses`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      let requestBody: BodyInit;
+      const headers: HeadersInit = {};
+      if (isMediaResponse && recordedAudioBlob) {
+        const formData = new FormData();
+        formData.append("interviewQuestionId", currentQuestion.id);
+        formData.append("responseType", interview.mode);
+        formData.append("duration", String(Math.max(1, currentQuestion.question.timeLimit - timer)));
+        formData.append("file", recordedAudioBlob, "response.webm");
+        requestBody = formData;
+      } else {
+        headers["Content-Type"] = "application/json";
+        requestBody = JSON.stringify({
           interviewQuestionId: currentQuestion.id,
-          responseType: interview?.mode || "TEXT",
+          responseType: "TEXT",
           textContent: finalAnswer,
           duration: Math.max(5, currentQuestion.question.timeLimit - timer),
-        }),
+        });
+      }
+
+      const res = await fetch(`/api/interviews/${interviewId}/responses`, {
+        method: "POST",
+        headers,
+        body: requestBody,
       });
 
       const data = await res.json();
@@ -647,6 +648,18 @@ export default function LiveInterviewPage() {
                     <p className="text-sm text-slate-700 leading-relaxed">{turnFeedback.explanation}</p>
                   </div>
 
+                  {(interview?.mode === "AUDIO" || interview?.mode === "VIDEO") && responses[currentQuestion.id]?.response && (
+                    <MediaTranscriptPanel
+                      status={responses[currentQuestion.id].response.transcriptStatus}
+                      transcript={responses[currentQuestion.id].response.transcriptText}
+                      onRerecord={() => {
+                        setTurnFeedback(null);
+                        setRecordedAudioBlob(null);
+                        audioChunksRef.current = [];
+                      }}
+                    />
+                  )}
+
                   <Button onClick={advanceToNextQuestion} className="w-full bg-[#1A365D] hover:bg-[#122742] text-white py-3.5 font-semibold text-base shadow-sm">
                     {currentIdx === questions.length - 1 ? (
                       <>View Complete Interview Report <ArrowRight className="ml-2 h-4 w-4" /></>
@@ -664,7 +677,7 @@ export default function LiveInterviewPage() {
                     </CardTitle>
 
                     <div className="flex items-center gap-2">
-                      {textAnswer && (
+                      {interview?.mode === "TEXT" && textAnswer && (
                         <button
                           onClick={() => {
                             setTextAnswer("");
@@ -678,7 +691,7 @@ export default function LiveInterviewPage() {
                         </button>
                       )}
 
-                      {speechSupported && (
+                      {interview?.mode === "TEXT" && speechSupported && (
                         <Button
                           size="sm"
                           variant={isListening ? "danger" : "outline"}
@@ -692,6 +705,21 @@ export default function LiveInterviewPage() {
                           )}
                         </Button>
                       )}
+                      {interview?.mode !== "TEXT" && (
+                        <Button
+                          size="sm"
+                          variant={isListening ? "danger" : "outline"}
+                          onClick={toggleListening}
+                          disabled={interview?.mode === "VIDEO" && !cameraActive}
+                          className={`text-xs gap-1.5 font-semibold ${isListening ? "animate-pulse" : ""}`}
+                        >
+                          {isListening
+                            ? <><MicOff className="h-3.5 w-3.5" /> Stop Recording</>
+                            : recordedAudioBlob
+                              ? <><RotateCcw className="h-3.5 w-3.5" /> Re-record</>
+                              : <><Mic className="h-3.5 w-3.5 text-emerald-600" /> Start Recording</>}
+                        </Button>
+                      )}
                     </div>
                   </div>
 
@@ -702,47 +730,38 @@ export default function LiveInterviewPage() {
                     </div>
                   )}
 
-                  {/* Real-time Streaming Response Box */}
-                  <div className="space-y-2">
-                    <div className="relative">
+                  {interview?.mode === "TEXT" ? (
+                    <div className="space-y-2">
                       <Textarea
-                        placeholder="Click 'Speak Answer' to transcribe your voice live in real-time, or type your structured answer here..."
+                        placeholder="Type your structured answer here, or use Speak Answer to dictate and edit it..."
                         value={textAnswer + (interimText ? (textAnswer ? " " : "") + interimText : "")}
-                        onChange={(e) => {
-                          setTextAnswer(e.target.value);
-                          committedTextRef.current = e.target.value;
+                        onChange={(event) => {
+                          setTextAnswer(event.target.value);
+                          committedTextRef.current = event.target.value;
                           setInterimText("");
                         }}
                         className="min-h-[190px] text-sm leading-relaxed p-4"
                         rows={7}
                       />
-                      {isListening && (
-                        <div className="absolute top-3 right-3 flex items-center gap-1 bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-semibold px-2 py-0.5 rounded-md animate-pulse">
-                          <span className="h-2 w-2 rounded-full bg-emerald-500"></span> Live Mic Active
-                        </div>
-                      )}
+                      <p className="text-xs text-slate-500">{textAnswer.split(/\s+/).filter(Boolean).length} words • {textAnswer.length} characters</p>
                     </div>
-
-                    <div className="flex items-center justify-between text-xs text-slate-500 pt-1">
-                      <span>{textAnswer.split(/\s+/).filter(Boolean).length} words • {textAnswer.length} characters</span>
-                      {recordedAudioBlob && !isListening && (
-                        <button
-                          onClick={handleAITranscriptionBackup}
-                          disabled={transcribingAudio}
-                          className="text-xs font-semibold text-blue-700 hover:text-blue-900 flex items-center gap-1 underline"
-                        >
-                          <Wand2 className="h-3 w-3" />
-                          {transcribingAudio ? "Transcribing via AI..." : "Enhance with Gemini STT"}
-                        </button>
-                      )}
+                  ) : (
+                    <div aria-live="polite" className="min-h-[190px] rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+                      {isListening
+                        ? "Recording in progress..."
+                        : recordedAudioBlob
+                          ? "Recording ready. The server will transcribe it after submission."
+                          : interview?.mode === "VIDEO" && !cameraActive
+                            ? "Turn on the camera to record a video response."
+                            : "Start recording. Your transcript will be generated automatically and cannot be edited."}
                     </div>
-                  </div>
+                  )}
 
                   {/* Submission Action */}
                   <div className="pt-2">
                     <Button 
                       onClick={handleLiveSubmit} 
-                      disabled={submitting || (!textAnswer.trim() && !interimText.trim())} 
+                      disabled={submitting || isListening || (interview?.mode === "TEXT" ? (!textAnswer.trim() && !interimText.trim()) : !recordedAudioBlob)}
                       className="w-full bg-[#1A365D] hover:bg-[#122742] text-white py-3.5 text-base font-semibold shadow-sm"
                     >
                       {submitting ? (
@@ -763,11 +782,19 @@ export default function LiveInterviewPage() {
 
               {/* Tips */}
               <Card className="p-5 border-slate-200/80 bg-slate-50/50">
-                <h4 className="text-xs font-bold text-slate-800 uppercase mb-2">Live Speech Transcription Tips:</h4>
+                <h4 className="text-xs font-bold text-slate-800 uppercase mb-2">{interview?.mode === "TEXT" ? "Text Response" : "Recorded Response"}</h4>
                 <ul className="text-xs text-slate-600 space-y-1.5 list-disc list-inside">
-                  <li>Click <strong>&quot;Speak Answer&quot;</strong> and speak clearly into your microphone.</li>
-                  <li>Words will transcribe cleanly into the response box in real-time.</li>
-                  <li>You can pause naturally while speaking or manually edit the text before submitting.</li>
+                  {interview?.mode === "TEXT" ? (
+                    <>
+                      <li>Type your answer or dictate with the microphone control.</li>
+                      <li>Text responses remain editable before and after submission.</li>
+                    </>
+                  ) : (
+                    <>
+                      <li>Record your answer, then submit it for automatic transcription.</li>
+                      <li>Transcripts are read-only; re-record to replace the response.</li>
+                    </>
+                  )}
                 </ul>
               </Card>
             </div>

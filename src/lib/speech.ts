@@ -20,69 +20,50 @@ export interface SpeechAnalysisResult {
 const AI_MODE = process.env.AI_MODE || "demo";
 
 export async function transcribeAudio(audioBuffer: Buffer, mimeType: string): Promise<SpeechTranscriptionResult> {
-  const geminiApiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY || process.env.GOOGLE_API_KEY;
+  const openAIApiKey = process.env.OPENAI_API_KEY;
 
-  if (AI_MODE === "demo" || !geminiApiKey) {
+  if (AI_MODE !== "real" || !openAIApiKey) {
     // Demo mode: return placeholder with indication
     return {
-      transcript: "[Demo Mode] Audio recorded successfully. In real AI mode with GEMINI_API_KEY, audio is automatically transcribed and analyzed by Google Gemini.",
+      transcript: "[Demo Mode] Audio recorded successfully. Configure OpenAI Whisper for automatic transcription.",
       provider: "demo",
       confidence: 0,
     };
   }
 
   try {
-    const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
-    const base64Audio = audioBuffer.toString("base64");
-    const normalizedMime = mimeType.split(";")[0].trim() || "audio/webm";
+    const formData = new FormData();
+    formData.append("file", new Blob([new Uint8Array(audioBuffer)], { type: mimeType || "audio/webm" }), "response.webm");
+    formData.append("model", process.env.OPENAI_TRANSCRIPTION_MODEL || "whisper-1");
+    formData.append("response_format", "json");
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
-
-    const response = await fetch(url, {
+    const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
+        Authorization: `Bearer ${openAIApiKey}`,
       },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              {
-                inlineData: {
-                  mimeType: normalizedMime,
-                  data: base64Audio,
-                },
-              },
-              {
-                text: "Transcribe the spoken audio verbatim in English. Output only the clear transcription text without timestamps, notes, commentary, or quotes.",
-              },
-            ],
-          },
-        ],
-        generationConfig: {
-          temperature: 0.1,
-        },
-      }),
+      body: formData,
+      signal: AbortSignal.timeout(30_000),
     });
 
     if (!response.ok) {
       const err = await response.text();
-      throw new Error(`Gemini Audio Transcription failed: ${err}`);
+      throw new Error(`OpenAI Whisper transcription failed: ${err}`);
     }
 
     const data = await response.json();
-    const transcriptText = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
+    const transcriptText = typeof data.text === "string" ? data.text.trim() : "";
 
     return {
       transcript: transcriptText,
-      provider: "google-gemini",
+      provider: "openai-whisper",
       confidence: 0.95,
     };
   } catch (error: unknown) {
-    console.error("Gemini Transcription error:", error);
+    console.error("OpenAI Whisper transcription error:", error);
     return {
       transcript: "",
-      provider: "google-gemini",
+      provider: "openai-whisper",
       error: error instanceof Error ? error.message : "Transcription failed",
     };
   }
