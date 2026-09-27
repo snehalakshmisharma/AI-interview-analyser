@@ -23,11 +23,13 @@ export async function transcribeAudio(audioBuffer: Buffer, mimeType: string): Pr
   const openAIApiKey = process.env.OPENAI_API_KEY;
 
   if (AI_MODE !== "real" || !openAIApiKey) {
-    // Demo mode: return placeholder with indication
     return {
-      transcript: "[Demo Mode] Audio recorded successfully. Configure OpenAI Whisper for automatic transcription.",
+      transcript: "",
       provider: "demo",
       confidence: 0,
+      error: AI_MODE !== "real"
+        ? "Automatic transcription is disabled. Set AI_MODE=real and configure OPENAI_API_KEY."
+        : "Automatic transcription requires OPENAI_API_KEY.",
     };
   }
 

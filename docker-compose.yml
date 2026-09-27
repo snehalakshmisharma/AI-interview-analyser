@@ -24,9 +24,10 @@ services:
     environment:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/app_db
       JWT_SECRET: dev-secret-key-change-in-prod-32chars-long
-      AI_MODE: demo
+      AI_MODE: ${AI_MODE:-demo}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       NEXT_PUBLIC_APP_URL: http://localhost:3000
-      NEXT_PUBLIC_AI_MODE: demo
+      NEXT_PUBLIC_AI_MODE: ${NEXT_PUBLIC_AI_MODE:-demo}
     depends_on:
       postgres:
         condition: service_healthy

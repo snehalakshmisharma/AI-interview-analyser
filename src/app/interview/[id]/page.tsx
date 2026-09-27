@@ -89,6 +89,26 @@ export default function LiveInterviewPage() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<BlobPart[]>([]);
   const [recordedAudioBlob, setRecordedAudioBlob] = useState<Blob | null>(null);
+  const [recordedTranscript, setRecordedTranscript] = useState("");
+  const [recordedTranscriptStatus, setRecordedTranscriptStatus] = useState("READY");
+
+  const transcribeRecording = async (blob: Blob) => {
+    setRecordedTranscript("");
+    setRecordedTranscriptStatus("TRANSCRIBING");
+    const formData = new FormData();
+    formData.append("file", blob, "response.webm");
+
+    try {
+      const response = await fetch("/api/transcribe", { method: "POST", body: formData });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Transcription failed");
+      setRecordedTranscript(result.error || result.transcript || "");
+      setRecordedTranscriptStatus(result.error ? "UNAVAILABLE" : result.transcript?.trim() ? "READY" : "NO_SPEECH");
+    } catch (error) {
+      setRecordedTranscript(error instanceof Error ? error.message : "Transcription failed.");
+      setRecordedTranscriptStatus("UNAVAILABLE");
+    }
+  };
 
   // Text-to-Speech function for AI Interviewer Voice
   const speakAIText = useCallback((text: string) => {
@@ -219,6 +239,8 @@ export default function LiveInterviewPage() {
 
     if (interview?.mode !== "TEXT") {
       setRecordedAudioBlob(null);
+      setRecordedTranscript("");
+      setRecordedTranscriptStatus("READY");
       try {
         let recordingStream = streamRef.current;
         if (interview?.mode === "AUDIO") {
@@ -233,7 +255,9 @@ export default function LiveInterviewPage() {
         };
         recorder.onstop = () => {
           const mediaType = recorder.mimeType || (interview?.mode === "VIDEO" ? "video/webm" : "audio/webm");
-          setRecordedAudioBlob(new Blob(audioChunksRef.current, { type: mediaType }));
+          const recording = new Blob(audioChunksRef.current, { type: mediaType });
+          setRecordedAudioBlob(recording);
+          void transcribeRecording(recording);
           if (interview?.mode === "AUDIO") recordingStream?.getTracks().forEach(track => track.stop());
         };
         recorder.start();
@@ -421,6 +445,8 @@ export default function LiveInterviewPage() {
       setInterimText("");
       committedTextRef.current = "";
       setRecordedAudioBlob(null);
+      setRecordedTranscript("");
+      setRecordedTranscriptStatus("READY");
       setTimer(questions[nextIdx]?.question.timeLimit ?? 120);
 
       // Read next question aloud
@@ -745,15 +771,24 @@ export default function LiveInterviewPage() {
                       />
                       <p className="text-xs text-slate-500">{textAnswer.split(/\s+/).filter(Boolean).length} words • {textAnswer.length} characters</p>
                     </div>
+                  ) : recordedAudioBlob && !isListening ? (
+                    <MediaTranscriptPanel
+                      transcript={recordedTranscript}
+                      status={recordedTranscriptStatus}
+                      onRerecord={() => {
+                        setRecordedAudioBlob(null);
+                        setRecordedTranscript("");
+                        setRecordedTranscriptStatus("READY");
+                        audioChunksRef.current = [];
+                      }}
+                    />
                   ) : (
                     <div aria-live="polite" className="min-h-[190px] rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
                       {isListening
                         ? "Recording in progress..."
-                        : recordedAudioBlob
-                          ? "Recording ready. The server will transcribe it after submission."
-                          : interview?.mode === "VIDEO" && !cameraActive
-                            ? "Turn on the camera to record a video response."
-                            : "Start recording. Your transcript will be generated automatically and cannot be edited."}
+                        : interview?.mode === "VIDEO" && !cameraActive
+                          ? "Turn on the camera to record a video response."
+                          : "Start recording. Your transcript will be generated automatically and cannot be edited."}
                     </div>
                   )}
 

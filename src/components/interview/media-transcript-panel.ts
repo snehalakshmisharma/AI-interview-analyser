@@ -9,9 +9,11 @@ type MediaTranscriptPanelProps = {
 
 export function MediaTranscriptPanel({ transcript, status, onRerecord }: MediaTranscriptPanelProps) {
   const message = status === "UNAVAILABLE"
-    ? "Transcription unavailable. Re-record your response to try again."
+    ? transcript || "Transcription unavailable. Check the transcription configuration and try again."
     : status === "NO_SPEECH"
       ? "No speech detected. Re-record your response."
+      : status === "TRANSCRIBING"
+        ? "Transcribing recording..."
       : transcript || "";
 
   return createElement("div", { className: "space-y-3 rounded-xl border border-slate-200 bg-white p-4" },
