@@ -105,8 +105,9 @@ See `.env.example`:
 - `DATABASE_URL` - Postgres connection
 - `JWT_SECRET` - min 32 chars
 - `AI_MODE` - demo | real
-- `OPENAI_API_KEY` - for real AI & Whisper
-- `OPENAI_MODEL` - default gpt-4o-mini
+- `GEMINI_API_KEY` - for real AI evaluation
+- `WHISPER_API_URL` - local faster-whisper service URL
+- `WHISPER_MODEL` - Whisper model size (default: `base`)
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`
 - `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_ISSUER_URL`, `OIDC_REDIRECT_URI`
 - `NEXT_PUBLIC_APP_URL`
@@ -161,15 +162,23 @@ Provider abstraction in `src/lib/oauth.ts` - add new providers by extending getO
 
 ### Demo Mode (default)
 - Heuristic scoring based on word count, concept coverage, structure
-- No external API calls
+- AI evaluation uses no external API calls
 - Visible "Demo Mode" badge
-- Transcription requires manual text for audio/video
+- Audio/video responses are transcribed by the local Whisper service
 
 ### Real Mode
-Set `AI_MODE=real` and `OPENAI_API_KEY`:
-- Uses `gpt-4o-mini` for evaluation (structured JSON, validated)
-- Uses Whisper for transcription
-- Falls back to demo if API fails
+Set `AI_MODE=real` and configure `GEMINI_API_KEY` to use Gemini for evaluation. Local Whisper transcription works independently of `AI_MODE` and does not require an API key.
+
+### Start Local Whisper
+Docker is required. The first start downloads the selected Whisper model and may take several minutes; subsequent starts reuse the cached model.
+
+For local development with `npm run dev`, start only the transcription service:
+```bash
+docker compose up --build whisper
+```
+The app connects to `http://localhost:8001/transcribe` by default. To run the full stack in Docker Compose, use `docker compose up --build`; Compose connects the app to Whisper internally.
+
+Set `WHISPER_MODEL=tiny` for faster, lower-resource transcription, or `WHISPER_MODEL=small` for better accuracy at higher CPU and memory cost. The default `base` model uses CPU inference.
 
 ## File Storage
 - Local: `public/uploads/` (gitignored, created at runtime)

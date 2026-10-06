@@ -17,40 +17,27 @@ export interface SpeechAnalysisResult {
   rawData?: Record<string, any>;
 }
 
-const AI_MODE = process.env.AI_MODE || "demo";
-
 export async function transcribeAudio(audioBuffer: Buffer, mimeType: string): Promise<SpeechTranscriptionResult> {
-  const openAIApiKey = process.env.OPENAI_API_KEY;
-
-  if (AI_MODE !== "real" || !openAIApiKey) {
-    return {
-      transcript: "",
-      provider: "demo",
-      confidence: 0,
-      error: AI_MODE !== "real"
-        ? "Automatic transcription is disabled. Set AI_MODE=real and configure OPENAI_API_KEY."
-        : "Automatic transcription requires OPENAI_API_KEY.",
-    };
-  }
+  const whisperApiUrl = process.env.WHISPER_API_URL || "http://localhost:8001/transcribe";
 
   try {
     const formData = new FormData();
-    formData.append("file", new Blob([new Uint8Array(audioBuffer)], { type: mimeType || "audio/webm" }), "response.webm");
-    formData.append("model", process.env.OPENAI_TRANSCRIPTION_MODEL || "whisper-1");
-    formData.append("response_format", "json");
+    const extension = mimeType.includes("mpeg") ? "mp3"
+      : mimeType.includes("wav") ? "wav"
+        : mimeType.includes("ogg") ? "ogg"
+          : mimeType.includes("mp4") ? "mp4"
+            : "webm";
+    formData.append("file", new Blob([new Uint8Array(audioBuffer)], { type: mimeType || "audio/webm" }), `response.${extension}`);
 
-    const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+    const response = await fetch(whisperApiUrl, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${openAIApiKey}`,
-      },
       body: formData,
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(120_000),
     });
 
     if (!response.ok) {
-      const err = await response.text();
-      throw new Error(`OpenAI Whisper transcription failed: ${err}`);
+      const errorBody = await response.text();
+      throw new Error(`Whisper transcription failed (${response.status}): ${errorBody}`);
     }
 
     const data = await response.json();
@@ -58,15 +45,17 @@ export async function transcribeAudio(audioBuffer: Buffer, mimeType: string): Pr
 
     return {
       transcript: transcriptText,
-      provider: "openai-whisper",
+      provider: "local-whisper",
       confidence: 0.95,
     };
   } catch (error: unknown) {
-    console.error("OpenAI Whisper transcription error:", error);
+    console.error("Local Whisper transcription error:", error);
     return {
       transcript: "",
-      provider: "openai-whisper",
-      error: error instanceof Error ? error.message : "Transcription failed",
+      provider: "local-whisper",
+      error: error instanceof Error
+        ? error.message
+        : "Whisper transcription failed. Check that the local Whisper service is running.",
     };
   }
 }

@@ -25,14 +25,35 @@ services:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/app_db
       JWT_SECRET: dev-secret-key-change-in-prod-32chars-long
       AI_MODE: ${AI_MODE:-demo}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      WHISPER_API_URL: http://whisper:8000/transcribe
       NEXT_PUBLIC_APP_URL: http://localhost:3000
       NEXT_PUBLIC_AI_MODE: ${NEXT_PUBLIC_AI_MODE:-demo}
     depends_on:
       postgres:
         condition: service_healthy
+      whisper:
+        condition: service_healthy
     volumes:
       - ./public/uploads:/app/public/uploads
 
+  whisper:
+    build: ./whisper
+    environment:
+      WHISPER_MODEL: ${WHISPER_MODEL:-base}
+      WHISPER_DEVICE: cpu
+      WHISPER_COMPUTE_TYPE: int8
+      WHISPER_DOWNLOAD_ROOT: /models
+    ports:
+      - "127.0.0.1:8001:8000"
+    volumes:
+      - whisper_models:/models
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 30
+      start_period: 120s
+
 volumes:
   postgres_data:
+  whisper_models:
