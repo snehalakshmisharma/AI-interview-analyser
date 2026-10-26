@@ -55,6 +55,10 @@ export default function LiveInterviewPage() {
 
   const [user, setUser] = useState<any>(null);
   const [interview, setInterview] = useState<any>(null);
+  const interviewModeRef = useRef<string | null>(null);
+  useEffect(() => {
+    interviewModeRef.current = interview?.mode ?? null;
+  }, [interview?.mode]);
   const [questions, setQuestions] = useState<QuestionData[]>([]);
   const [currentIdx, setCurrentIdx] = useState(0);
   const [textAnswer, setTextAnswer] = useState("");
@@ -69,6 +73,9 @@ export default function LiveInterviewPage() {
   const [isListening, setIsListening] = useState(false);
   const isListeningRef = useRef(false);
   const committedTextRef = useRef("");
+  const [liveCaption, setLiveCaption] = useState("");
+  const [liveCaptionStatus, setLiveCaptionStatus] = useState<"idle" | "connecting" | "whisper" | "fallback" | "unavailable">("idle");
+  const captionFallbackStartedRef = useRef(false);
 
   const [speechSupported] = useState(() => {
     if (typeof window === "undefined") return true;
@@ -87,6 +94,10 @@ export default function LiveInterviewPage() {
   const recognitionRef = useRef<any>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const liveSocketRef = useRef<WebSocket | null>(null);
+  const liveAudioContextRef = useRef<AudioContext | null>(null);
+  const liveAudioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const liveAudioProcessorRef = useRef<ScriptProcessorNode | null>(null);
   const audioChunksRef = useRef<BlobPart[]>([]);
   const [recordedAudioBlob, setRecordedAudioBlob] = useState<Blob | null>(null);
   const [recordedTranscript, setRecordedTranscript] = useState("");
@@ -182,9 +193,13 @@ export default function LiveInterviewPage() {
             if (event.results[i].isFinal) {
               const cleaned = transcript.trim();
               if (cleaned) {
-                const prefix = committedTextRef.current && !committedTextRef.current.endsWith(" ") ? " " : "";
-                committedTextRef.current += prefix + cleaned;
-                setTextAnswer(committedTextRef.current);
+                if (interviewModeRef.current === "TEXT") {
+                  const prefix = committedTextRef.current && !committedTextRef.current.endsWith(" ") ? " " : "";
+                  committedTextRef.current += prefix + cleaned;
+                  setTextAnswer(committedTextRef.current);
+                } else {
+                  setLiveCaption(previous => `${previous}${previous && !previous.endsWith(" ") ? " " : ""}${cleaned}`);
+                }
               }
             } else {
               currentInterim += transcript;
@@ -200,6 +215,9 @@ export default function LiveInterviewPage() {
             return;
           }
           console.warn("Speech recognition notice:", event.error);
+          if (interviewModeRef.current !== "TEXT" && captionFallbackStartedRef.current) {
+            setLiveCaptionStatus("unavailable");
+          }
         };
 
         recognition.onend = () => {
@@ -208,8 +226,12 @@ export default function LiveInterviewPage() {
             try {
               recognition.start();
             } catch {
-              setIsListening(false);
-              isListeningRef.current = false;
+              if (interviewModeRef.current === "TEXT") {
+                setIsListening(false);
+                isListeningRef.current = false;
+              } else {
+                setLiveCaptionStatus("unavailable");
+              }
             }
           } else {
             setIsListening(false);
@@ -225,11 +247,132 @@ export default function LiveInterviewPage() {
       if (recognitionRef.current) {
         try { recognitionRef.current.stop(); } catch {}
       }
+      const socket = liveSocketRef.current;
+      liveSocketRef.current = null;
+      socket?.close();
+      liveAudioProcessorRef.current?.disconnect();
+      liveAudioSourceRef.current?.disconnect();
+      if (liveAudioContextRef.current) void liveAudioContextRef.current.close();
       if (typeof window !== "undefined" && "speechSynthesis" in window) {
         window.speechSynthesis.cancel();
       }
     };
   }, []);
+
+  const startBrowserCaptionFallback = () => {
+    if (!isListeningRef.current || captionFallbackStartedRef.current) return;
+    captionFallbackStartedRef.current = true;
+    setLiveCaption("");
+    stopLiveCaptionStream();
+    if (!recognitionRef.current) {
+      setLiveCaptionStatus("unavailable");
+      return;
+    }
+
+    setLiveCaptionStatus("fallback");
+    try {
+      recognitionRef.current.start();
+    } catch {
+      setLiveCaptionStatus("unavailable");
+    }
+  };
+
+  const stopLiveCaptionStream = () => {
+    const socket = liveSocketRef.current;
+    liveSocketRef.current = null;
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: "stop" }));
+    }
+    socket?.close();
+
+    if (liveAudioProcessorRef.current) {
+      liveAudioProcessorRef.current.onaudioprocess = null;
+      liveAudioProcessorRef.current.disconnect();
+      liveAudioProcessorRef.current = null;
+    }
+    liveAudioSourceRef.current?.disconnect();
+    liveAudioSourceRef.current = null;
+    if (liveAudioContextRef.current) {
+      void liveAudioContextRef.current.close();
+      liveAudioContextRef.current = null;
+    }
+  };
+
+  const startLocalCaptionStream = (stream: MediaStream) => {
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    let socket: WebSocket;
+    try {
+      socket = new WebSocket(`${protocol}//${window.location.hostname}:8001/live`);
+    } catch {
+      startBrowserCaptionFallback();
+      return;
+    }
+    liveSocketRef.current = socket;
+
+    socket.onopen = () => {
+      if (!isListeningRef.current) {
+        socket.close();
+        return;
+      }
+
+      let audioContext: AudioContext | null = null;
+      try {
+        audioContext = new AudioContext();
+        void audioContext.resume();
+        const source = audioContext.createMediaStreamSource(stream);
+        const processor = audioContext.createScriptProcessor(4096, 1, 1);
+        const silentOutput = audioContext.createGain();
+        silentOutput.gain.value = 0;
+        source.connect(processor);
+        processor.connect(silentOutput);
+        silentOutput.connect(audioContext.destination);
+
+        processor.onaudioprocess = (event) => {
+          if (socket.readyState !== WebSocket.OPEN) return;
+          if (socket.bufferedAmount > 512 * 1024) {
+            startBrowserCaptionFallback();
+            return;
+          }
+          const input = event.inputBuffer.getChannelData(0);
+          const pcm = new Int16Array(input.length);
+          for (let index = 0; index < input.length; index += 1) {
+            const sample = Math.max(-1, Math.min(1, input[index]));
+            pcm[index] = sample < 0 ? sample * 32768 : sample * 32767;
+          }
+          socket.send(pcm.buffer);
+        };
+
+        liveAudioContextRef.current = audioContext;
+        liveAudioSourceRef.current = source;
+        liveAudioProcessorRef.current = processor;
+        socket.send(JSON.stringify({ type: "start", sampleRate: audioContext.sampleRate }));
+        setLiveCaptionStatus("whisper");
+      } catch {
+        if (audioContext) void audioContext.close();
+        socket.close();
+        startBrowserCaptionFallback();
+      }
+    };
+
+    socket.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data);
+        if (message.type === "caption" && typeof message.text === "string") {
+          setLiveCaption(message.text);
+          setLiveCaptionStatus("whisper");
+        } else if (message.type === "error") {
+          startBrowserCaptionFallback();
+        }
+      } catch {
+        startBrowserCaptionFallback();
+      }
+    };
+
+    socket.onerror = startBrowserCaptionFallback;
+    socket.onclose = () => {
+      if (isListeningRef.current) startBrowserCaptionFallback();
+    };
+  };
 
   // Start / Stop Live Speech Recognition & Audio Recorder
   const startListening = async () => {
@@ -241,6 +384,9 @@ export default function LiveInterviewPage() {
       setRecordedAudioBlob(null);
       setRecordedTranscript("");
       setRecordedTranscriptStatus("READY");
+      setLiveCaption("");
+      setLiveCaptionStatus("connecting");
+      captionFallbackStartedRef.current = false;
       try {
         let recordingStream = streamRef.current;
         if (interview?.mode === "AUDIO") {
@@ -262,6 +408,7 @@ export default function LiveInterviewPage() {
         };
         recorder.start();
         mediaRecorderRef.current = recorder;
+        startLocalCaptionStream(recordingStream);
       } catch (recordError) {
         isListeningRef.current = false;
         setIsListening(false);
@@ -293,6 +440,7 @@ export default function LiveInterviewPage() {
         recognitionRef.current.stop();
       } catch {}
     }
+    stopLiveCaptionStream();
 
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       try {
@@ -770,6 +918,20 @@ export default function LiveInterviewPage() {
                         rows={7}
                       />
                       <p className="text-xs text-slate-500">{textAnswer.split(/\s+/).filter(Boolean).length} words • {textAnswer.length} characters</p>
+                    </div>
+                  ) : isListening ? (
+                    <div aria-live="polite" className="min-h-[190px] rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+                      <p className="mb-2 text-xs font-semibold uppercase text-slate-600">
+                        {liveCaptionStatus === "whisper"
+                          ? "Live captions · Local Whisper"
+                          : liveCaptionStatus === "fallback"
+                            ? "Live captions · Browser fallback only"
+                            : liveCaptionStatus === "unavailable"
+                              ? "Live captions unavailable"
+                              : "Connecting to local Whisper..."}
+                      </p>
+                      <p className="whitespace-pre-wrap">{liveCaption || interimText || "Speak normally. Captions will appear here."}</p>
+                      <p className="mt-3 text-xs text-slate-500">Live captions are a preview; the completed recording is transcribed separately for evaluation.</p>
                     </div>
                   ) : recordedAudioBlob && !isListening ? (
                     <MediaTranscriptPanel

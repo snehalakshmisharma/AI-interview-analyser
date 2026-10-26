@@ -26,7 +26,8 @@ College students need realistic mock interviews and structured feedback before p
 - View all reports
 
 ### AI / Speech
-- **Speech-to-Text**: Provider abstraction, OpenAI Whisper when configured, demo fallback
+- **Speech-to-Text**: Local Faster-Whisper transcribes submitted audio/video recordings; live captions use local CPU inference when available
+- **Live Caption Fallback**: Browser speech recognition may show temporary captions if local Whisper is unavailable; fallback captions are not saved or used for evaluation
 - **Speech Analysis**: Duration, speaking rate (wpm), pause count, filler words, fluency, confidence
 - **Question-aware Evaluation**: Uses question + expected concepts + guidance + transcript
 - **Demo Mode**: Clearly marked mock outputs when AI not configured; real mode uses OpenAI
@@ -167,16 +168,18 @@ Provider abstraction in `src/lib/oauth.ts` - add new providers by extending getO
 - Audio/video responses are transcribed by the local Whisper service
 
 ### Real Mode
-Set `AI_MODE=real` and configure `GEMINI_API_KEY` to use Gemini for evaluation. Local Whisper transcription works independently of `AI_MODE` and does not require an API key.
+Set `AI_MODE=real` and configure `GEMINI_API_KEY` to use Gemini for evaluation. Local Faster-Whisper transcription works independently of `AI_MODE` and does not require a transcription API key.
 
 ### Start Local Whisper
-Docker is required. The first start downloads the selected Whisper model and may take several minutes; subsequent starts reuse the cached model.
+Docker Desktop is required on Windows. The first start downloads the selected Whisper model and may take several minutes; subsequent starts reuse the cached model in the `whisper_models` volume. The service uses CPU inference with `int8` by default and publishes port `8001` on loopback for local HTTP transcription and live captions. No OpenAI API key is needed.
 
 For local development with `npm run dev`, start only the transcription service:
 ```bash
 docker compose up --build whisper
 ```
-The app connects to `http://localhost:8001/transcribe` by default. To run the full stack in Docker Compose, use `docker compose up --build`; Compose connects the app to Whisper internally.
+The app connects to `http://localhost:8001/transcribe` for final recording transcription and `ws://localhost:8001/live` for live audio/video captions. To run the full stack in Docker Compose, use `docker compose up --build`; the app container uses the internal Whisper service address for final transcription, while the browser uses the host-published port for live captions.
+
+Live captions are emitted from overlapping six-second audio windows, then refreshed every four seconds. CPU latency varies by machine and model size; this is near-real-time windowed decoding, not token-by-token streaming. Live captions are a preview only. The completed recording is transcribed separately by the server, and only that server-generated transcript is persisted and evaluated.
 
 Set `WHISPER_MODEL=tiny` for faster, lower-resource transcription, or `WHISPER_MODEL=small` for better accuracy at higher CPU and memory cost. The default `base` model uses CPU inference.
 
@@ -202,9 +205,9 @@ Tested breakpoints: 1920, 1440, 1024, 768, 480, 390, 360
 ## Known Limitations
 - Video analysis: No facial/emotion detection (intentionally excluded per spec - would be unreliable without proper ML pipeline)
 - Speech metrics: Estimated from transcript when duration not provided; "Not available" shown when unreliable
-- Real-time transcription: Requires OPENAI_API_KEY; demo mode needs manual transcript
+- Live captions: Local CPU Whisper updates in overlapping windows, so captions may lag speech; browser fallback captions are preview-only
 - Audio recording: Browser-dependent, requires permission
-- AI evaluation: Requires OPENAI_API_KEY for real LLM; demo uses heuristics clearly marked
+- AI evaluation: Requires GEMINI_API_KEY for real LLM evaluation; demo uses heuristics clearly marked
 
 ## Future Enhancements
 - Cloud storage (S3) for recordings
