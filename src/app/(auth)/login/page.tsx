@@ -1,5 +1,5 @@
 "use client";
-import { useState, Suspense } from "react";
+import { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -10,11 +10,21 @@ import { Brain, AlertCircle } from "lucide-react";
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  // Initialize error from URL param (set by OAuth redirects) — computed once on mount
+  // Initialize error from URL param (set by OAuth redirects)
   const urlError = searchParams.get("error");
   const [form, setForm] = useState({ email: "", password: "" });
   const [error, setError] = useState(urlError ? decodeURIComponent(urlError) : "");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (urlError) {
+      try {
+        setError(decodeURIComponent(urlError));
+      } catch {
+        setError(urlError);
+      }
+    }
+  }, [urlError]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

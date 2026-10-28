@@ -1,6 +1,18 @@
+export function getGoogleRedirectUri(): string {
+  if (process.env.GOOGLE_REDIRECT_URI) {
+    return process.env.GOOGLE_REDIRECT_URI;
+  }
+  const appUrl = (process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000").replace(/\/+$/, "");
+  return `${appUrl}/api/auth/oauth/google/callback`;
+}
+
+export function isGoogleOAuthConfigured(): boolean {
+  return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+}
+
 export function getGoogleAuthUrl(state: string): string {
   const clientId = process.env.GOOGLE_CLIENT_ID;
-  const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/api/auth/oauth/google/callback`;
+  const redirectUri = getGoogleRedirectUri();
 
   if (!clientId) throw new Error("GOOGLE_CLIENT_ID not configured");
 
@@ -17,10 +29,10 @@ export function getGoogleAuthUrl(state: string): string {
   return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
 }
 
-export async function exchangeGoogleCode(code: string): Promise<{ access_token: string; id_token: string }> {
+export async function exchangeGoogleCode(code: string): Promise<{ access_token: string; id_token: string; refresh_token?: string }> {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/api/auth/oauth/google/callback`;
+  const redirectUri = getGoogleRedirectUri();
 
   if (!clientId || !clientSecret) throw new Error("Google OAuth not configured");
 
@@ -49,14 +61,17 @@ export async function getGoogleUserInfo(accessToken: string): Promise<{ email: s
     headers: { Authorization: `Bearer ${accessToken}` },
   });
 
-  if (!response.ok) throw new Error("Failed to fetch user info");
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`Failed to fetch user info: ${err}`);
+  }
   return response.json();
 }
 
 export function getOIDCAuthUrl(state: string): string {
   const issuer = process.env.OIDC_ISSUER_URL;
   const clientId = process.env.OIDC_CLIENT_ID;
-  const redirectUri = process.env.OIDC_REDIRECT_URI || `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/api/auth/sso/callback`;
+  const redirectUri = process.env.OIDC_REDIRECT_URI || `${(process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000").replace(/\/+$/, "")}/api/auth/sso/callback`;
 
   if (!issuer || !clientId) throw new Error("OIDC not configured");
 
@@ -75,7 +90,7 @@ export async function exchangeOIDCCode(code: string): Promise<any> {
   const issuer = process.env.OIDC_ISSUER_URL;
   const clientId = process.env.OIDC_CLIENT_ID;
   const clientSecret = process.env.OIDC_CLIENT_SECRET;
-  const redirectUri = process.env.OIDC_REDIRECT_URI || `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/api/auth/sso/callback`;
+  const redirectUri = process.env.OIDC_REDIRECT_URI || `${(process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000").replace(/\/+$/, "")}/api/auth/sso/callback`;
 
   if (!issuer || !clientId || !clientSecret) throw new Error("OIDC not configured");
 
