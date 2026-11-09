@@ -1,238 +1,214 @@
 # AI Placement Interview Analyzer
 
-**AI Interview Scoring and Communication Analytics**
-
-Professional placement interview practice and assessment platform for college students, with faculty monitoring.
-
-> Practice smarter. Understand your performance. Improve your interview readiness.
-
-## Problem Statement
-College students need realistic mock interviews and structured feedback before placements. Existing tools lack question-aware technical evaluation, communication analytics, and placement readiness indicators.
+A full-stack mock interview and assessment platform for students, with faculty tools for monitoring interview performance.
 
 ## Features
 
-### Student
-- **Interview Setup**: Type (HR, Technical, Behavioral, Mixed), Difficulty (Beginner/Intermediate/Advanced), Mode (Text/Audio/Video), Category (General, CS, Data Science/AI, Software Dev, Custom), Questions (5/10/15)
-- **Interview Flow**: Timer, question display, expected concepts, text/audio/video response, recording controls
-- **AI Evaluation**: 9 dimensions - Technical, Relevance, Communication, Fluency, Grammar, Vocabulary, Problem Solving, Structure, Confidence
-- **Reports**: Dimension-wise scores, strengths, improvement areas, missing concepts, recommendations, question-wise analysis
-- **Analytics**: Score trends, category performance, radar charts, placement readiness indicator
-- **History**: Search, filter, sort interviews
+- Student accounts with email/password, optional Google OAuth, and configurable OIDC single sign-on.
+- Interview setup for HR, technical, behavioral, and mixed interviews, with text, audio, and video response modes.
+- Question-aware evaluation with nine score dimensions, feedback, and placement-readiness indicators.
+- Interview history, performance trends, and faculty dashboards.
+- Local speech transcription using Faster-Whisper. Live captions are previews; the submitted recording is transcribed separately for evaluation.
+- Demo evaluation mode that works without an AI API key, and optional Gemini evaluation in real mode.
 
-### Faculty / Admin
-- Dashboard: Total students, interviews, average scores
-- Student list with search/filter, placement readiness
-- Student detail: profile, interview history, trends
-- View all reports
+## Stack
 
-### AI / Speech
-- **Speech-to-Text**: Provider abstraction, OpenAI Whisper when configured, demo fallback
-- **Speech Analysis**: Duration, speaking rate (wpm), pause count, filler words, fluency, confidence
-- **Question-aware Evaluation**: Uses question + expected concepts + guidance + transcript
-- **Demo Mode**: Clearly marked mock outputs when AI not configured; real mode uses OpenAI
-- **Validation**: All scores clamped 0-100, malformed AI responses handled gracefully
+- Next.js 16, React 19, TypeScript, and Tailwind CSS 4
+- PostgreSQL 15, Drizzle ORM, and Drizzle Kit
+- Faster-Whisper service (FastAPI) for audio/video transcription
+- Docker Compose for the app, database, and transcription service
 
-### Auth & Security
-- Email/password with bcrypt hashing
-- Google OAuth 2.0 (real flow, state validation)
-- OIDC SSO abstraction (Google Workspace, Microsoft Entra ID, any OIDC provider)
-- JWT httpOnly cookies, 7d expiry, secure in prod
-- Role-based access: STUDENT, FACULTY, ADMIN
-- Backend authorization enforced (not just frontend)
-- File validation, size limits, safe filenames
+## Prerequisites
 
-## Tech Stack
-- **Frontend**: Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS 4, Lucide React, Recharts
-- **Backend**: Next.js API Routes (fullstack), Drizzle ORM, PostgreSQL
-- **AI**: OpenAI-compatible API, Whisper STT, heuristic fallback for demo
-- **Auth**: jose JWT, bcryptjs, OAuth 2.0, OIDC
-- **Deployment**: Docker, Docker Compose, Vercel-ready
+For local development, install:
 
-## Architecture
-```
-/src
-  /app
-    /api - REST APIs (auth, questions, interviews, faculty, performance, seed)
-    /(auth)/login, register
-    /dashboard, /interview, /history, /performance, /faculty
-  /components/ui - Button, Card, Input, Badge, Navbar
-  /lib - auth, scoring, ai-evaluation, speech, oauth, seed-questions, utils
-  /db - schema, index
-```
+- Node.js 20 or later and npm
+- PostgreSQL 15, or Docker Desktop with the Compose plugin
 
-## Database Models
-- **users**: id, name, email, password_hash, role, department, year, skills
-- **oauth_accounts**: user_id, provider, provider_account_id
-- **questions**: question_text, category, difficulty, interview_type, expected_concepts[], evaluation_guidance, time_limit
-- **interviews**: student_id, type, category, difficulty, mode, status, overall/technical/communication scores, placement_readiness
-- **interview_questions**: interview_id, question_id, sequence
-- **responses**: interview_question_id, response_type, text_content, audio_path, video_path, transcript, duration
-- **speech_analyses**: response_id, duration, speaking_rate, pause_count, filler_words, fluency, confidence
-- **evaluations**: response_id, 9 dimension scores, overall, explanation, strengths[], improvement_areas[], missing_concepts[], recommendations[]
+Docker Desktop is required to run Postgres or Whisper through Compose. The first Whisper startup downloads the selected model and can take several minutes; model files are cached in a Docker volume.
 
-## Scoring Configuration
-Centralized in `src/lib/scoring.ts`:
-- Technical 25%, Relevance 15%, Communication 15%, Fluency 10%, Grammar 10%, Vocabulary 5%, Problem Solving 10%, Structure 5%, Confidence 5%
-- Placement Readiness: technical 50%, communication 30%, overall 20% -> level: Highly Ready (85+), Ready (70+), Moderately Ready (55+), Developing (40+), Needs Improvement
+## Quick Start: Local Development
 
-## Installation
+The commands below run the Next.js app on your machine and PostgreSQL in Docker. Whisper is optional for text interviews and can be started separately for audio/video transcription.
 
-### Prerequisites
-- Node.js 18+, PostgreSQL 14+
+1. Install dependencies and create your local environment file:
 
-### Local Setup
-```bash
-git clone <repo>
-npm install
-cp .env.example .env
-# Edit .env with DATABASE_URL, JWT_SECRET
-npx drizzle-kit push
-npm run dev
+   ```powershell
+   npm ci
+   Copy-Item .env.example .env
+   ```
+
+   On macOS/Linux, use `cp .env.example .env` instead of `Copy-Item`.
+
+2. Start PostgreSQL:
+
+   ```powershell
+   docker compose up -d postgres
+   ```
+
+   The Compose database defaults to `postgres` / `postgres`, database `app_db`, port `5432`. The example `DATABASE_URL` connects to this database from the host.
+
+   If you already have PostgreSQL running locally, skip Docker and update `DATABASE_URL` in `.env` to match your local database and credentials.
+
+3. Apply the Drizzle schema:
+
+   ```powershell
+   npx drizzle-kit push
+   ```
+
+4. Start the app:
+
+   ```powershell
+   npm run dev
+   ```
+
+   Open [http://localhost:3000](http://localhost:3000).
+
+5. (Optional) Start local transcription in a second terminal:
+
+   ```powershell
+   docker compose up --build whisper
+   ```
+
+   The app uses `http://localhost:8001/transcribe`; the browser connects to `ws://localhost:8001/live` for live caption previews.
+
+## Quick Start: Full Docker Compose Stack
+
+This starts the app, PostgreSQL, and Whisper. Compose reads `.env` for variable substitution, so create it first:
+
+```powershell
+Copy-Item .env.example .env
+docker compose up --build -d
 ```
 
-### Seed Data
-```bash
-curl -X POST http://localhost:3000/api/seed
-# Or auto-seeds on dashboard load
+The first Whisper build/start may take several minutes while Docker downloads the model. Once the services are ready, apply the database schema and seed sample data:
+
+```powershell
+docker compose exec app npx drizzle-kit push
 ```
 
-Demo accounts:
-- Student: student@demo.com / demo123
-- Faculty: faculty@demo.com / demo123
+Set a non-empty `SEED_SECRET` in `.env`, then seed the questions and demo accounts:
 
-### Environment Variables
-See `.env.example`:
-- `DATABASE_URL` - Postgres connection
-- `JWT_SECRET` - min 32 chars
-- `AI_MODE` - demo | real
-- `OPENAI_API_KEY` - for real AI & Whisper
-- `OPENAI_MODEL` - default gpt-4o-mini
-- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`
-- `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_ISSUER_URL`, `OIDC_REDIRECT_URI`
-- `NEXT_PUBLIC_APP_URL`
+```powershell
+curl.exe -X POST http://localhost:3000/api/seed -H "x-seed-secret: your-seed-secret"
+```
 
-## OAuth Setup
+Open [http://localhost:3000](http://localhost:3000). Useful service commands:
+
+```powershell
+docker compose ps
+docker compose logs -f app
+docker compose down
+```
+
+`docker compose down` preserves the database and Whisper model volumes. To delete the persisted database and downloaded model as well, use `docker compose down -v` (this permanently deletes that data).
+
+### Compose Services and Ports
+
+| Service | Purpose | Host address |
+| --- | --- | --- |
+| `app` | Next.js web app and API | `http://localhost:3000` |
+| `postgres` | PostgreSQL 15 | `localhost:5432` |
+| `whisper` | Transcription API | `http://localhost:8001` |
+
+The app container connects to Postgres by the Compose service name `postgres` and to Whisper at `http://whisper:8000/transcribe`. The browser uses the host-published Whisper address for live captions. PostgreSQL data is stored in the `postgres_data` volume; Whisper models are stored in `whisper_models`.
+
+## Environment Configuration
+
+Copy `.env.example` to `.env`. For local development, review these values:
+
+| Variable | Purpose | Default / guidance |
+| --- | --- | --- |
+| `DATABASE_URL` | PostgreSQL connection string | Example uses `postgresql://postgres:postgres@127.0.0.1:5432/app_db`; inside Compose the app uses the `postgres` service address. |
+| `JWT_SECRET` | Signs authentication cookies | Replace the example value with a long random secret. |
+| `AI_MODE` | Evaluation mode | `demo` (default) or `real`. |
+| `GEMINI_API_KEY` | Gemini evaluation API key | Required for `AI_MODE=real`; create a key in Google AI Studio. |
+| `GEMINI_MODEL` | Gemini model name | Defaults to `gemini-2.5-flash`. |
+| `NEXT_PUBLIC_AI_MODE` | Mode label shown by the client | Keep in sync with `AI_MODE` when changing modes. |
+| `WHISPER_API_URL` | Server-side transcription endpoint | Host development: `http://localhost:8001/transcribe`; Compose sets the internal service URL. |
+| `WHISPER_MODEL` | Faster-Whisper model size | `base` by default; `tiny` uses fewer resources, while `small` is slower and may improve accuracy. |
+| `NEXT_PUBLIC_APP_URL` | Public app URL used in auth flows | `http://localhost:3000` locally. |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google OAuth credentials | Optional; configure both to enable Google login. |
+| `GOOGLE_REDIRECT_URI` | Google OAuth callback | `http://localhost:3000/api/auth/oauth/google/callback` locally. |
+| `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_ISSUER_URL` | OIDC SSO credentials | Optional; set for your identity provider. |
+| `OIDC_REDIRECT_URI` | OIDC callback | `http://localhost:3000/api/auth/sso/callback` locally. |
+| `SEED_SECRET` | Protects the seed endpoint outside development | Set a private value before using the endpoint in Docker/production. |
+
+Compose uses its own `postgres` service URL and local development database credentials. Change the database credentials in `docker-compose.yml` and the app connection URL together before exposing the stack beyond local development. Do not commit `.env` or use the development credentials in production.
+
+## Seed Data and Demo Accounts
+
+The seed endpoint inserts the starter question bank and these accounts if they do not already exist:
+
+- Student: `student@demo.com` / `demo123`
+- Faculty: `faculty@demo.com` / `demo123`
+
+In local development, seed with:
+
+```powershell
+curl.exe -X POST http://localhost:3000/api/seed
+```
+
+In Docker or any production-mode deployment, the endpoint requires `SEED_SECRET` and the `x-seed-secret` request header as shown above. Change or remove the demo accounts before using a deployed instance with real users.
+
+## Google OAuth and OIDC Setup
 
 ### Google OAuth
-1. Go to https://console.cloud.google.com/apis/credentials
-2. Create OAuth 2.0 Client ID (Web)
-3. Authorized redirect: `http://localhost:3000/api/auth/oauth/google/callback`
-4. Set env vars
 
-### OIDC SSO (e.g., Microsoft Entra ID)
-1. Register app in Entra ID
-2. Set redirect: `http://localhost:3000/api/auth/sso/callback`
-3. Get issuer URL (e.g., `https://login.microsoftonline.com/{tenant}/v2.0`)
-4. Set OIDC_* env vars
+1. Create a Web OAuth client in the [Google Cloud Console](https://console.cloud.google.com/apis/credentials).
+2. Add `http://localhost:3000/api/auth/oauth/google/callback` as an authorized redirect URI.
+3. Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` in `.env`.
 
-Provider abstraction in `src/lib/oauth.ts` - add new providers by extending getOIDCAuthUrl.
+### OIDC single sign-on
 
-## API Documentation
+1. Register the application with your OIDC provider (for example, Microsoft Entra ID).
+2. Add `http://localhost:3000/api/auth/sso/callback` as a redirect URI.
+3. Set `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_ISSUER_URL`, and `OIDC_REDIRECT_URI`.
 
-### Auth
-- POST /api/auth/register - {name,email,password,role,department,year}
-- POST /api/auth/login - {email,password}
-- POST /api/auth/logout
-- GET /api/auth/me
-- GET /api/auth/oauth/google - redirects to Google
-- GET /api/auth/oauth/google/callback
-- GET /api/auth/sso - redirects to OIDC provider
-- GET /api/auth/sso/callback
+For other environments, use the matching deployed app URL in the provider configuration and environment variables.
 
-### Questions
-- GET /api/questions?category=&difficulty=&type=
-- POST /api/questions (faculty only)
+## AI and Speech Behavior
 
-### Interviews
-- POST /api/interviews - {type,category,difficulty,mode,totalQuestions}
-- GET /api/interviews?studentId=
-- GET /api/interviews/{id}
-- POST /api/interviews/{id}/responses - JSON or multipart (file)
-- POST /api/interviews/{id}/complete
+- `AI_MODE=demo` evaluates answers with local heuristics and makes no Gemini evaluation request.
+- `AI_MODE=real` uses Gemini and requires `GEMINI_API_KEY`; if no supported key is present, evaluation falls back to demo heuristics.
+- Faster-Whisper transcription runs locally and is independent of the evaluation mode. It does not need an external transcription API key.
+- Live captions are generated from overlapping audio windows and may lag. They are previews; the final uploaded recording is transcribed separately by the server.
+- Whisper runs on CPU with `int8` in the provided Compose configuration. Choose a smaller model for lower resource use or a larger model for potentially better accuracy.
 
-### Reports & Analytics
-- GET /api/performance/me
-- GET /api/faculty/students
-- GET /api/faculty/students/{id}
-- GET /api/config
-- POST /api/seed
+## Database Workflow
 
-## Speech & AI Configuration
+The Drizzle schema is defined in `src/db/schema.ts`, with configuration in `drizzle.config.ts`. For local development, apply schema changes with:
 
-### Demo Mode (default)
-- Heuristic scoring based on word count, concept coverage, structure
-- No external API calls
-- Visible "Demo Mode" badge
-- Transcription requires manual text for audio/video
-
-### Real Mode
-Set `AI_MODE=real` and `OPENAI_API_KEY`:
-- Uses `gpt-4o-mini` for evaluation (structured JSON, validated)
-- Uses Whisper for transcription
-- Falls back to demo if API fails
-
-## File Storage
-- Local: `public/uploads/` (gitignored, created at runtime)
-- Validates MIME, size 25MB max, safe UUID filenames
-- Abstraction ready for S3/GCS extension
-
-## Responsive Design
-Tested breakpoints: 1920, 1440, 1024, 768, 480, 390, 360
-- Desktop: full sidebar, multi-column, tables
-- Tablet: collapsible nav, responsive grids
-- Mobile: hamburger, stacked cards, touch-friendly, no horizontal overflow
-
-## Security
-- Password hashing bcrypt 12 rounds
-- JWT httpOnly, secure, sameSite lax
-- OAuth state validation, CSRF protection
-- Role enforcement on backend
-- File type/size validation
-- No secrets in frontend
-
-## Known Limitations
-- Video analysis: No facial/emotion detection (intentionally excluded per spec - would be unreliable without proper ML pipeline)
-- Speech metrics: Estimated from transcript when duration not provided; "Not available" shown when unreliable
-- Real-time transcription: Requires OPENAI_API_KEY; demo mode needs manual transcript
-- Audio recording: Browser-dependent, requires permission
-- AI evaluation: Requires OPENAI_API_KEY for real LLM; demo uses heuristics clearly marked
-
-## Future Enhancements
-- Cloud storage (S3) for recordings
-- More question categories and adaptive difficulty
-- Peer review and faculty comments
-- Resume analysis integration
-- Detailed speech fluency with actual audio processing (e.g., using Web Audio API for pause detection)
-- WebSocket for real-time interview coaching
-
-## Testing
-Manual testing checklist:
-- [x] Registration, login, logout
-- [x] Google OAuth when configured
-- [x] SSO when configured
-- [x] Role isolation (student cannot access faculty APIs)
-- [x] Interview creation, text response, evaluation
-- [x] Audio recording (browser)
-- [x] Report generation, history, performance
-- [x] Faculty dashboard
-- [x] Responsive layouts
-- [x] Error handling (mic denied, API failure)
-
-## Deployment
-
-### Docker
-```bash
-docker-compose up --build
-# App at http://localhost:3000, Postgres at 5432
+```powershell
+npx drizzle-kit push
 ```
 
-### Vercel (Frontend)
-- Set env vars in Vercel dashboard
-- Add DATABASE_URL pointing to managed Postgres (e.g., Neon, Supabase)
+For the Docker app, run the same command inside the container:
 
-### Render (Backend equivalent)
-- This is fullstack Next.js, so same Docker image works
-- Ensure DATABASE_URL and JWT_SECRET set
+```powershell
+docker compose exec app npx drizzle-kit push
+```
+
+The checked-in SQL files are migration history; `drizzle-kit push` is the current development workflow. Back up persistent data before applying schema changes to a database you care about.
+
+## Tests and Checks
+
+```powershell
+npm test
+npm run lint
+npm run typecheck
+npm run build
+```
+
+## Security and Deployment Notes
+
+- Use unique, strong values for `JWT_SECRET`, database credentials, and `SEED_SECRET` outside local development.
+- Keep secrets in the deployment platform's secret manager; never commit `.env`.
+- The seed endpoint is protected by `SEED_SECRET` when `NODE_ENV` is not `development`.
+- Uploaded recordings are stored under `public/uploads`; the Compose app mounts this directory from the host. Configure durable, private storage and retention controls before production use.
+- The provided Compose configuration is intended for local development. Add TLS, managed secrets, backups, resource limits, durable/private upload storage, and an appropriately hosted Whisper service before production deployment.
+- Audio/video capture requires browser permission and support for the relevant recording APIs.
 
 ## License
-Educational project - not for production without security audit.
+
+Educational project. Review the code and deployment configuration for your requirements before production use.

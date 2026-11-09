@@ -17,73 +17,45 @@ export interface SpeechAnalysisResult {
   rawData?: Record<string, any>;
 }
 
-const AI_MODE = process.env.AI_MODE || "demo";
-
 export async function transcribeAudio(audioBuffer: Buffer, mimeType: string): Promise<SpeechTranscriptionResult> {
-  const geminiApiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY || process.env.GOOGLE_API_KEY;
-
-  if (AI_MODE === "demo" || !geminiApiKey) {
-    // Demo mode: return placeholder with indication
-    return {
-      transcript: "[Demo Mode] Audio recorded successfully. In real AI mode with GEMINI_API_KEY, audio is automatically transcribed and analyzed by Google Gemini.",
-      provider: "demo",
-      confidence: 0,
-    };
-  }
+  const whisperApiUrl = process.env.WHISPER_API_URL || "http://localhost:8001/transcribe";
 
   try {
-    const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
-    const base64Audio = audioBuffer.toString("base64");
-    const normalizedMime = mimeType.split(";")[0].trim() || "audio/webm";
+    const formData = new FormData();
+    const extension = mimeType.includes("mpeg") ? "mp3"
+      : mimeType.includes("wav") ? "wav"
+        : mimeType.includes("ogg") ? "ogg"
+          : mimeType.includes("mp4") ? "mp4"
+            : "webm";
+    formData.append("file", new Blob([new Uint8Array(audioBuffer)], { type: mimeType || "audio/webm" }), `response.${extension}`);
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
-
-    const response = await fetch(url, {
+    const response = await fetch(whisperApiUrl, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              {
-                inlineData: {
-                  mimeType: normalizedMime,
-                  data: base64Audio,
-                },
-              },
-              {
-                text: "Transcribe the spoken audio verbatim in English. Output only the clear transcription text without timestamps, notes, commentary, or quotes.",
-              },
-            ],
-          },
-        ],
-        generationConfig: {
-          temperature: 0.1,
-        },
-      }),
+      body: formData,
+      signal: AbortSignal.timeout(120_000),
     });
 
     if (!response.ok) {
-      const err = await response.text();
-      throw new Error(`Gemini Audio Transcription failed: ${err}`);
+      const errorBody = await response.text();
+      throw new Error(`Whisper transcription failed (${response.status}): ${errorBody}`);
     }
 
     const data = await response.json();
-    const transcriptText = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
+    const transcriptText = typeof data.text === "string" ? data.text.trim() : "";
 
     return {
       transcript: transcriptText,
-      provider: "google-gemini",
+      provider: "local-whisper",
       confidence: 0.95,
     };
   } catch (error: unknown) {
-    console.error("Gemini Transcription error:", error);
+    console.error("Local Whisper transcription error:", error);
     return {
       transcript: "",
-      provider: "google-gemini",
-      error: error instanceof Error ? error.message : "Transcription failed",
+      provider: "local-whisper",
+      error: error instanceof Error
+        ? error.message
+        : "Whisper transcription failed. Check that the local Whisper service is running.",
     };
   }
 }

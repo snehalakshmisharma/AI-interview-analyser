@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, jsonb, integer, timestamp, unique, varchar, foreignKey, real, pgEnum } from "drizzle-orm/pg-core"
+import { pgTable, uuid, text, jsonb, integer, timestamp, unique, varchar, foreignKey, real, pgEnum, boolean } from "drizzle-orm/pg-core"
 import { sql } from "drizzle-orm"
 
 export const difficulty = pgEnum("difficulty", ['BEGINNER', 'INTERMEDIATE', 'ADVANCED'])
@@ -46,6 +46,8 @@ export const responses = pgTable("responses", {
 	audioPath: text("audio_path"),
 	videoPath: text("video_path"),
 	transcriptText: text("transcript_text"),
+	transcriptLocked: boolean("transcript_locked").default(false).notNull(),
+	transcriptStatus: varchar("transcript_status", { length: 20 }).default('READY').notNull(),
 	duration: integer(),
 	submittedAt: timestamp("submitted_at", { mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
